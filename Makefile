@@ -1,3 +1,3 @@
 all:
-	gcc -o perceptron3 perceptron3.c -lm
-	./perceptron3
+	gcc -o perceptron8 perceptron8.c -lm
+	./perceptron8

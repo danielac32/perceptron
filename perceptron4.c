@@ -21,11 +21,6 @@ DistanceSample global_training_data[] = {
     {30.0, 3},  // Si la distancia es 30 cm, girar a la derecha
     {35.0, 3},  // Si la distancia es 35 cm, girar a la derecha
     {40.0, 0},  // Si la distancia es 40 cm, avanzar
-  /*  {45.0, 0},  // Si la distancia es 45 cm, avanzar
-    {50.0, 0},  // Si la distancia es 50 cm, avanzar
-    {55.0, 0},  // Si la distancia es 55 cm, avanzar
-    {60.0, 0},  // Si la distancia es 60 cm, avanzar
-    {70.0, 0}   // Si la distancia es 70 cm, avanzar*/
 };
 
 // Tamaño de la lista de datos de entrenamiento
@@ -234,6 +229,62 @@ void train_mlp(MLP *mlp, DistanceSample training_data[], int data_size, double l
     }
 }
 
+// Guardar los pesos y biases en un archivo
+void save_mlp(MLP *mlp, const char *filename) {
+    FILE *file = fopen(filename, "wb");
+    if (!file) {
+        perror("Error al abrir el archivo para guardar");
+        return;
+    }
+
+    // Guardar pesos de la capa de entrada a la oculta
+    for (int i = 0; i < mlp->input_size; i++) {
+        fwrite(mlp->weights_input_hidden[i], sizeof(double), mlp->hidden_size, file);
+    }
+
+    // Guardar pesos de la capa oculta a la de salida
+    for (int i = 0; i < mlp->hidden_size; i++) {
+        fwrite(mlp->weights_hidden_output[i], sizeof(double), mlp->output_size, file);
+    }
+
+    // Guardar biases de la capa oculta
+    fwrite(mlp->bias_hidden, sizeof(double), mlp->hidden_size, file);
+
+    // Guardar biases de la capa de salida
+    fwrite(mlp->bias_output, sizeof(double), mlp->output_size, file);
+
+    fclose(file);
+    printf("Pesos y biases guardados en %s\n", filename);
+}
+
+// Cargar los pesos y biases desde un archivo
+void load_mlp(MLP *mlp, const char *filename) {
+    FILE *file = fopen(filename, "rb");
+    if (!file) {
+        perror("Error al abrir el archivo para cargar");
+        return;
+    }
+
+    // Cargar pesos de la capa de entrada a la oculta
+    for (int i = 0; i < mlp->input_size; i++) {
+        fread(mlp->weights_input_hidden[i], sizeof(double), mlp->hidden_size, file);
+    }
+
+    // Cargar pesos de la capa oculta a la de salida
+    for (int i = 0; i < mlp->hidden_size; i++) {
+        fread(mlp->weights_hidden_output[i], sizeof(double), mlp->output_size, file);
+    }
+
+    // Cargar biases de la capa oculta
+    fread(mlp->bias_hidden, sizeof(double), mlp->hidden_size, file);
+
+    // Cargar biases de la capa de salida
+    fread(mlp->bias_output, sizeof(double), mlp->output_size, file);
+
+    fclose(file);
+    printf("Pesos y biases cargados desde %s\n", filename);
+}
+
 // Función para obtener el nombre de la acción
 const char* get_action_name(int action) {
     return action_names[action];
@@ -270,12 +321,35 @@ int main() {
     int data_size;
     load_training_data(training_data, &data_size);
 
-    // Crear y entrenar el modelo
+    // Crear el modelo
     MLP *mlp = create_mlp(1, 5, 4);  // 1 entrada (distancia), 5 neuronas en la capa oculta, 4 salidas (acciones)
-    train_mlp(mlp, training_data, data_size, 0.01, 1000);
+
+    const char *filename = "mlp_weights.bin";
+
+    // Menú de opciones
+    printf("Seleccione una opción:\n");
+    printf("1. Entrenar y guardar pesos\n");
+    printf("2. Cargar pesos y predecir\n");
+    int option;
+    scanf("%d", &option);
+
+    if (option == 1) {
+        // Entrenar el modelo y guardar los pesos
+        train_mlp(mlp, training_data, data_size, 0.01, 1000);
+        save_mlp(mlp, filename);
+    } else if (option == 2) {
+        // Cargar los pesos y predecir
+        load_mlp(mlp, filename);
+    } else {
+        printf("Opción no válida.\n");
+        free_mlp(mlp);
+        return 1;
+    }
 
     // Probar el modelo con una distancia
-    double test_distance = 1000.0;  // Distancia en cm
+    double test_distance;
+    printf("Ingrese una distancia en cm para predecir la acción: ");
+    scanf("%lf", &test_distance);
     predict_and_print(mlp, test_distance);
 
     // Liberar memoria

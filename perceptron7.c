@@ -1,18 +1,18 @@
+// este modelo de perceptron no aprovecha las capacidades del algoritmo , ya que usa una funcion para encontrar las palabras clave
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <math.h>
 
-// Estructura para definir un texto
+// Estructura para definir una muestra de texto y etiqueta
 typedef struct {
-    const char *text;  // Texto
-    int label;         // Etiqueta (1 para "pago especial", 0 para otro tipo)
-} TextDefinition;
+    char text[100];  // Texto de entrada
+    int label;       // Etiqueta (1: "pago especial", 0: otro pago)
+} TextSample;
 
-// Lista de textos predefinidos
-TextDefinition text_definitions[] = {
-    // Ejemplos de "pago especial"
+// Lista de datos de entrenamiento (global)
+TextSample global_training_data[] = {
     {"pago especial para institucion", 1},
     {"se le dara un pago especial", 1},
     {"se realizo un pago especial", 1},
@@ -55,17 +55,20 @@ TextDefinition text_definitions[] = {
     {"se realizó el pago de la licencia de software", 0},
     {"se adquirió equipo de seguridad", 0},
     {"se pagó la factura de agua", 0},
-    {"se adquirió equipo especial para el laboratorio", 0},  // Nuevo ejemplo
-    {"se compró material especial para la construcción", 0}, // Nuevo ejemplo
-    {"se instaló un sistema especial de seguridad", 0},      // Nuevo ejemplo
-    {"se diseñó un programa especial para estudiantes", 0},  // Nuevo ejemplo
-    {"se implementó un protocolo especial de emergencia", 0},// Nuevo ejemplo
-    {"especial atención al cliente", 0},                    // Nuevo ejemplo
-    {"un evento especial para la comunidad", 0},            // Nuevo ejemplo
+    {"se adquirió equipo especial para el laboratorio", 0},
+    {"se compró material especial para la construcción", 0},
+    {"se instaló un sistema especial de seguridad", 0},
+    {"se diseñó un programa especial para estudiantes", 0},
+    {"se implementó un protocolo especial de emergencia", 0},
+    {"especial atención al cliente", 0},
+    {"un evento especial para la comunidad", 0},
 };
 
-// Vocabulario (palabras únicas en los textos)
-const char *vocab[] = {
+// Tamaño de la lista de datos de entrenamiento
+const int global_training_data_size = sizeof(global_training_data) / sizeof(TextSample);
+
+// Vocabulario de palabras únicas
+const char *vocabulary[] = {
     "bombillo", "pago", "especial", "para", "institucion", "se", "le", "dara", "realizo", "hizo", "daniel", "niño", "compro", "baños",
     "personal", "empleados", "servicios", "adicionales", "aprobó", "docentes", "equipo", "trabajo", "voluntarios", "horas", "extras",
     "entregó", "contratistas", "becarios", "asignó", "guardias", "desempeño", "excepcional", "consultores", "conductores", "supervisores",
@@ -74,8 +77,7 @@ const char *vocab[] = {
     "reuniones", "internet", "herramientas", "taller", "prima", "seguros", "limpieza", "teléfono", "uniformes", "licencia", "software",
     "seguridad", "agua"
 };
-
-int vocab_size = sizeof(vocab) / sizeof(vocab[0]);  // +1 para la nueva característica
+const int vocabulary_size = sizeof(vocabulary) / sizeof(vocabulary[0]);
 
 // Estructura de la Red Neuronal Multicapa (MLP)
 typedef struct {
@@ -83,9 +85,9 @@ typedef struct {
     double **weights_hidden_output; // Pesos entre la capa oculta y la de salida
     double *bias_hidden;            // Bias de la capa oculta
     double *bias_output;            // Bias de la capa de salida
-    int input_size;                 // Tamaño de la entrada (número de palabras únicas)
+    int input_size;                 // Tamaño de la entrada (vocabulario_size + 1)
     int hidden_size;                // Tamaño de la capa oculta
-    int output_size;                // Tamaño de la salida (1 para clasificación binaria)
+    int output_size;                // Tamaño de la salida (2 para clasificación binaria)
 } MLP;
 
 // Función de activación (ReLU)
@@ -98,14 +100,24 @@ double relu_derivative(double x) {
     return x > 0 ? 1 : 0;
 }
 
-// Función de activación (Sigmoid)
-double sigmoid(double x) {
-    return 1 / (1 + exp(-x));
-}
+// Función de activación (Softmax)
+void softmax(double *x, int size) {
+    double max = x[0];
+    for (int i = 1; i < size; i++) {
+        if (x[i] > max) {
+            max = x[i];
+        }
+    }
 
-// Derivada de la función Sigmoid
-double sigmoid_derivative(double x) {
-    return x * (1 - x);
+    double sum = 0.0;
+    for (int i = 0; i < size; i++) {
+        x[i] = exp(x[i] - max);
+        sum += x[i];
+    }
+
+    for (int i = 0; i < size; i++) {
+        x[i] /= sum;
+    }
 }
 
 // Inicializar la red neuronal
@@ -164,81 +176,150 @@ void free_mlp(MLP *mlp) {
     free(mlp);
 }
 
-// Predecir la salida para una entrada dada
-double predict_mlp(MLP *mlp, double *inputs) {
-    // Capa oculta
+// Función para verificar si "pago" y "especial" aparecen juntos
+int contiene_pago_especial(const char *texto) {
+    char text_copy[100];
+    strcpy(text_copy, texto);  // Copiar el texto para no modificar el original
+
+    char *token = strtok(text_copy, " ");
+    char prev_token[20] = "";
+
+    while (token != NULL) {
+        if (strcmp(token, "pago") == 0) {
+            strcpy(prev_token, token);
+        } else if (strcmp(token, "especial") == 0 && strcmp(prev_token, "pago") == 0) {
+            return 1;  // "pago" y "especial" aparecen juntos
+        }
+        token = strtok(NULL, " ");
+    }
+
+    return 0;  // No aparecen juntos
+}
+
+// Función para convertir un texto en un vector one-hot con característica adicional
+void text_to_one_hot(const char *text, double *vector) {
+    for (int i = 0; i < vocabulary_size; i++) {
+        vector[i] = 0.0;  // Inicializar el vector a 0
+    }
+
+    char text_copy[100];
+    strcpy(text_copy, text);  // Copiar el texto para no modificar el original
+
+    char *token = strtok(text_copy, " ");
+    while (token != NULL) {
+        for (int i = 0; i < vocabulary_size; i++) {
+            if (strcmp(token, vocabulary[i]) == 0) {
+                vector[i] = 1.0;  // Marcar la palabra en el vector one-hot
+            }
+        }
+        token = strtok(NULL, " ");
+    }
+
+    // Agregar la característica adicional: si "pago" y "especial" aparecen juntos
+    vector[vocabulary_size] = contiene_pago_especial(text) ? 1.0 : 0.0;
+}
+
+// Predecir la salida para un texto dado
+void predict_mlp_text(MLP *mlp, const char *text, double *output) {
+    double input[vocabulary_size + 1];  // +1 para la característica adicional
+    text_to_one_hot(text, input);  // Convertir texto a one-hot
+
     double hidden[mlp->hidden_size];
+
+    // Capa oculta
     for (int i = 0; i < mlp->hidden_size; i++) {
         hidden[i] = 0.0;
         for (int j = 0; j < mlp->input_size; j++) {
-            hidden[i] += inputs[j] * mlp->weights_input_hidden[j][i];
+            hidden[i] += input[j] * mlp->weights_input_hidden[j][i];
         }
         hidden[i] += mlp->bias_hidden[i];
         hidden[i] = relu(hidden[i]);
     }
 
     // Capa de salida
-    double output = 0.0;
-    for (int i = 0; i < mlp->hidden_size; i++) {
-        output += hidden[i] * mlp->weights_hidden_output[i][0];
+    for (int i = 0; i < mlp->output_size; i++) {
+        output[i] = 0.0;
+        for (int j = 0; j < mlp->hidden_size; j++) {
+            output[i] += hidden[j] * mlp->weights_hidden_output[j][i];
+        }
+        output[i] += mlp->bias_output[i];
     }
-    output += mlp->bias_output[0];
-    output = sigmoid(output);
 
-    return output;
+    // Aplicar softmax
+    softmax(output, mlp->output_size);
 }
 
-// Entrenar la red neuronal
-void train_mlp(MLP *mlp, double training_data[][vocab_size], int *labels, int data_size, double learning_rate, int epochs) {
+// Entrenar la red neuronal con datos de texto
+void train_mlp_text(MLP *mlp, TextSample training_data[], int data_size, double learning_rate, int epochs) {
     for (int epoch = 0; epoch < epochs; epoch++) {
         double total_loss = 0.0;
 
         for (int i = 0; i < data_size; i++) {
-            double output;
+            double input[vocabulary_size + 1];  // +1 para la característica adicional
+            text_to_one_hot(training_data[i].text, input);  // Convertir texto a one-hot
+
+            double output[mlp->output_size];
             double hidden[mlp->hidden_size];
 
             // Forward pass
             for (int j = 0; j < mlp->hidden_size; j++) {
                 hidden[j] = 0.0;
                 for (int k = 0; k < mlp->input_size; k++) {
-                    hidden[j] += training_data[i][k] * mlp->weights_input_hidden[k][j];
+                    hidden[j] += input[k] * mlp->weights_input_hidden[k][j];
                 }
                 hidden[j] += mlp->bias_hidden[j];
                 hidden[j] = relu(hidden[j]);
             }
 
-            output = 0.0;
-            for (int j = 0; j < mlp->hidden_size; j++) {
-                output += hidden[j] * mlp->weights_hidden_output[j][0];
+            for (int j = 0; j < mlp->output_size; j++) {
+                output[j] = 0.0;
+                for (int k = 0; k < mlp->hidden_size; k++) {
+                    output[j] += hidden[k] * mlp->weights_hidden_output[k][j];
+                }
+                output[j] += mlp->bias_output[j];
             }
-            output += mlp->bias_output[0];
-            output = sigmoid(output);
+            softmax(output, mlp->output_size);
 
             // Calcular la pérdida (entropía cruzada)
-            double loss = -labels[i] * log(output + 1e-10) - (1 - labels[i]) * log(1 - output + 1e-10);
-            total_loss += loss;
+            double loss = 0.0;
+            for (int j = 0; j < mlp->output_size; j++) {
+                loss += (j == training_data[i].label ? 1 : 0) * log(output[j] + 1e-10);
+            }
+            total_loss -= loss;
 
             // Backpropagation
-            double delta_output = output - labels[i];
+            double delta_output[mlp->output_size];
+            for (int j = 0; j < mlp->output_size; j++) {
+                delta_output[j] = (j == training_data[i].label ? 1 : 0) - output[j];
+            }
+
             double delta_hidden[mlp->hidden_size];
             for (int j = 0; j < mlp->hidden_size; j++) {
-                delta_hidden[j] = delta_output * mlp->weights_hidden_output[j][0] * relu_derivative(hidden[j]);
+                delta_hidden[j] = 0.0;
+                for (int k = 0; k < mlp->output_size; k++) {
+                    delta_hidden[j] += delta_output[k] * mlp->weights_hidden_output[j][k];
+                }
+                delta_hidden[j] *= relu_derivative(hidden[j]);
             }
 
             // Actualizar pesos y biases de la capa de salida
             for (int j = 0; j < mlp->hidden_size; j++) {
-                mlp->weights_hidden_output[j][0] -= learning_rate * delta_output * hidden[j];
+                for (int k = 0; k < mlp->output_size; k++) {
+                    mlp->weights_hidden_output[j][k] += learning_rate * delta_output[k] * hidden[j];
+                }
             }
-            mlp->bias_output[0] -= learning_rate * delta_output;
+            for (int j = 0; j < mlp->output_size; j++) {
+                mlp->bias_output[j] += learning_rate * delta_output[j];
+            }
 
             // Actualizar pesos y biases de la capa oculta
             for (int j = 0; j < mlp->input_size; j++) {
                 for (int k = 0; k < mlp->hidden_size; k++) {
-                    mlp->weights_input_hidden[j][k] -= learning_rate * delta_hidden[k] * training_data[i][j];
+                    mlp->weights_input_hidden[j][k] += learning_rate * delta_hidden[k] * input[j];
                 }
             }
             for (int j = 0; j < mlp->hidden_size; j++) {
-                mlp->bias_hidden[j] -= learning_rate * delta_hidden[j];
+                mlp->bias_hidden[j] += learning_rate * delta_hidden[j];
             }
         }
 
@@ -249,56 +330,25 @@ void train_mlp(MLP *mlp, double training_data[][vocab_size], int *labels, int da
     }
 }
 
-// Función para convertir texto en un vector de características (bolsa de palabras)
-void text_to_vector(const char *text, double *vector, const char **vocab, int vocab_size) {
-    for (int i = 0; i < vocab_size - 1; i++) {  // Usar vocab_size - 1
-        vector[i] = 0.0; // Inicializar a 0
-        if (strstr(text, vocab[i]) != NULL) { // Verificar si la palabra está en el texto
-            vector[i] = 1.0; // Marcar como presente
-        }
-    }
-    // Característica adicional: ¿Contiene la frase "pago especial"?
-   vector[vocab_size - 1] = (strstr(text, "pago especial") != NULL) ? 1.0 : 0.0;
-}
+// Función para predecir y mostrar el resultado
+void predict_and_print_text(MLP *mlp, const char *text) {
+    double output[mlp->output_size];
+    predict_mlp_text(mlp, text, output);
 
-// Función para cargar los datos de entrenamiento
-void load_training_data(double training_data[][vocab_size], int *labels, size_t *data_size, const char **vocab, int vocab_size) {
-    *data_size = sizeof(text_definitions) / sizeof(TextDefinition);
-    for (size_t i = 0; i < *data_size; i++) {
-        for (int j = 0; j < vocab_size; j++) {
-            training_data[i][j] = 0.0; // Inicializar a 0
-            if (strstr(text_definitions[i].text, vocab[j]) != NULL) { // Verificar si la palabra está en el texto
-                training_data[i][j] = 1.0; // Marcar como presente
-            }
-        }
-        labels[i] = text_definitions[i].label;
-    }
+    int predicted_label = (output[1] > output[0]) ? 1 : 0;  // Clasificación binaria
+    printf("Texto: %s -> Predicción: %s\n", text, predicted_label ? "Pago especial" : "Otro pago");
 }
 
 int main() {
-    // Cargar datos de entrenamiento
-    size_t data_size = sizeof(text_definitions) / sizeof(TextDefinition);
-    double training_data[data_size][vocab_size];  // Ajustar el tamaño según el número de textos y el vocabulario
-    int labels[data_size];
-    load_training_data(training_data, labels, &data_size, vocab, vocab_size);
+    // Crear el modelo
+    MLP *mlp = create_mlp(vocabulary_size + 1, 10, 2);  // +1 para la característica adicional
 
-    // Crear y entrenar el modelo
-    MLP *mlp = create_mlp(vocab_size, 10, 1);  // Más neuronas en la capa oculta
-    train_mlp(mlp, training_data, labels, data_size, 0.005, 20000);  // Tasa de aprendizaje más baja y más épocas
+    // Entrenar el modelo
+    train_mlp_text(mlp, global_training_data, global_training_data_size, 0.01, 1000);
 
-    // Probar el modelo con un nuevo texto
-    const char *test_text = "se implementó un protocolo especial de emergencia";
-    double test_vector[vocab_size];
-    for (int i = 0; i < vocab_size - 1; i++) {
-        test_vector[i] = 0.0;
-        if (strstr(test_text, vocab[i]) != NULL) {
-            test_vector[i] = 1.0;
-        }
-    }
-    test_vector[vocab_size - 1] = (strstr(test_text, "pago especial") != NULL) ? 1.0 : 0.0;
-
-    double output = predict_mlp(mlp, test_vector);
-    printf("Texto: %s -> Predicción: %s\n", test_text, output > 0.5 ? "Pago especial" : "Otro tipo");
+    // Probar el modelo con un texto
+    const char *test_text = "se realizó un pago  a los voluntarios";
+    predict_and_print_text(mlp, test_text);
 
     // Liberar memoria
     free_mlp(mlp);
